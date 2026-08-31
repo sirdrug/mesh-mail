@@ -1,0 +1,63 @@
+# Телеграм-мост mesh-mail. Ставится на VPS рядом с хабом.
+#
+#   sudo useradd --system --no-create-home --shell /usr/sbin/nologin mesh
+#   sudo install -m 755 bin/mesh /usr/local/bin/mesh
+#   sudo mkdir -p /etc/mesh
+#   sudo install -m 640 -o root -g mesh config/node.yaml /etc/mesh/bridge.yaml
+#   printf 'TELEGRAM_TOKEN=...\n' | sudo tee /etc/mesh/bridge.env >/dev/null
+#   sudo chmod 640 /etc/mesh/bridge.env && sudo chown root:mesh /etc/mesh/bridge.env
+#   sudo cp deploy/systemd/mesh-bridge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now mesh-bridge
+#
+# Логи: journalctl -u mesh-bridge -f. В первых строках должно быть
+# «мост работает от имени @…» — это проверка токена на старте.
+
+[Unit]
+Description=mesh-mail: телеграм-мост (витрина и обратная связь)
+Documentation=https://github.com/boreevyuri/mesh-mail
+Wants=network-online.target
+After=network-online.target
+
+# Мост завершается сам, когда канал в телеграм недоступен целиком: бота
+# выкинули из чата, отозвали токен, чат удалили. Без этих двух строк такой
+# отказ не виден вообще. Умолчание systemd — пять запусков за десять секунд,
+# а с RestartSec=5 их бывает максимум два: предел недостижим, юнит никогда
+# не переходит в failed и молотит перезапуски вечно, наполняя журнал.
+# Три отказа за пять минут — это failed, то есть состояние, которое видно
+# в systemctl status и на которое можно повесить оповещение.
+StartLimitIntervalSec=300
+StartLimitBurst=3
+# Мост живёт на одном VPS с хабом: без хаба ему нечего читать. Это порядок
+# запуска, а не жёсткая зависимость — хаб может перезапускаться отдельно,
+# мост переподключится сам.
+After=nats-hub.service
+
+[Service]
+Type=simple
+User=mesh
+Group=mesh
+# WorkingDirectory намеренно не задан: и бинарник, и конфиг указаны
+# абсолютными путями, а несуществующий каталог уронил бы сервис на CHDIR
+# ещё до ExecStart — с диагностикой, по которой причину не угадать.
+
+# Токен бота лежит в отдельном файле, а не в юните: юнит читается всеми,
+# EnvironmentFile — только root и группой mesh.
+EnvironmentFile=/etc/mesh/bridge.env
+ExecStart=/usr/local/bin/mesh bridge --config /etc/mesh/bridge.yaml
+
+# Мост восстанавливается сам: NATS-клиент переподключается вечно, а
+# накопленные письма заберёт durable-консьюмер telegram-bridge при старте.
+Restart=always
+RestartSec=5
+
+# Состояние моста целиком в JetStream KV, на диск он не пишет ничего.
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+NoNewPrivileges=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

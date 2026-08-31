@@ -1,0 +1,32 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(go test *)",
+      "Bash(go build *)",
+      "Bash(go vet *)",
+      "Bash(go list *)",
+      "Bash(go doc *)",
+      "Bash(golangci-lint run *)",
+      "Bash(glab mr view *)",
+      "Bash(glab mr list *)",
+      "Bash(glab mr diff *)",
+      "Bash(glab ci status *)",
+      "Bash(glab ci list *)",
+      "Bash(glab ci trace *)",
+      "mcp__agent-mail__fetch_inbox",
+      "mcp__agent-mail__search_messages",
+      "mcp__agent-mail__whois",
+      "mcp__agent-mail__mark_message_read",
+      "mcp__mcp-agent-mail__fetch_inbox",
+      "mcp__mcp-agent-mail__search_messages",
+      "mcp__mcp-agent-mail__whois",
+      "mcp__mcp-agent-mail__mark_message_read",
+      "mcp__idea__search_text",
+      "mcp__idea__read_file",
+      "mcp__idea__search_file",
+      "mcp__idea__list_directory_tree",
+      "mcp__idea__get_file_problems",
+      "mcp__idea__get_run_configurations"
+    ]
+  }
+}

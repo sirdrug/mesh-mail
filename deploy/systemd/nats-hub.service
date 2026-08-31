@@ -1,0 +1,53 @@
+# Хаб NATS. Ставится ТОЛЬКО НА VPS — это единственная машина, куда приходят
+# входящие соединения. На Raspberry Pi этот юнит не нужен: Pi теперь обычный
+# узел сети и ставит себе только mesh-daemon.service.
+#
+# Установка (на VPS):
+#   sudo cp deploy/systemd/nats-hub.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now nats-hub
+
+[Unit]
+Description=NATS hub (mesh-mail)
+Documentation=https://docs.nats.io
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nats
+Group=nats
+
+# Секретов в окружении нет: аутентификация узлов идёт по NKey, а в hub.conf
+# лежат только публичные ключи. EnvironmentFile здесь намеренно отсутствует.
+
+ExecStart=/usr/local/bin/nats-server -c /etc/nats/hub.conf
+ExecReload=/bin/kill -HUP $MAINPID
+
+Restart=always
+RestartSec=5
+
+# Изоляция. Сервер пишет в лог и в хранилище JetStream — там лежат письма,
+# позиции чтения агентов и состояние моста. Состояние есть, и оно требует
+# резервного копирования: docs/deployment.md, раздел «Резервное копирование».
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/log/nats /var/lib/nats
+
+# Сертификат сервер читает НЕ из /etc/letsencrypt, а из своей копии.
+# Причина: при продлении certbot создаёт файлы заново от root, и права,
+# выставленные руками один раз, слетают на 60-й день. Обнаруживается это
+# при следующем рестарте хаба — то есть через недели после поломки.
+# Копию кладёт deploy-хук certbot, он же перезагружает сервер.
+ReadOnlyPaths=/etc/nats/tls
+
+# Сервер должен слушать 4222 на публичном интерфейсе — это единственный
+# порт, который открывается наружу в файрволе VPS:
+#   ufw allow 4222/tcp comment 'mesh-mail NATS'
+# Порт мониторинга 8222 в hub.conf привязан к 127.0.0.1 и наружу не идёт.
+
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
