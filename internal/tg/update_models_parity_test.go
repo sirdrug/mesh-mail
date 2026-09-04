@@ -650,6 +650,68 @@ func TestParityНезнакомоеВложенноеПолеНеОтменяе�
 	}
 }
 
+// Документ и подпись разбираются обоими путями одинаково.
+//
+// У сообщения с файлом человеческий текст лежит в caption, а разметка — в
+// caption_entities; сам файл описан объектом document. Мост читает caption как
+// текст, иначе `/to` в подписи не сработал бы. Проверяется И основной путь
+// (models), И запасной (wireUpdate, включаемый незнакомым вложенным полем):
+// разойдись они — файл доходил бы по-разному в зависимости от соседнего поля.
+func TestParityДокументИПодписьРазбираютсяОбоимиПутями(t *testing.T) {
+	const файлИПодпись = `"document": {
+			"file_id": "BQACAgIAAxkBAAExample",
+			"file_name": "example.zip",
+			"file_size": 20480,
+			"mime_type": "application/zip"
+		},
+		"caption": "/to pm вот структура",
+		"caption_entities": [{"type": "bot_command", "offset": 0, "length": 3}]`
+
+	хочу := tg.Update{
+		ID:       7,
+		ChatID:   "-1001",
+		Text:     "/to pm вот структура",
+		From:     "tester",
+		FromID:   9,
+		Entities: []tg.Entity{{Type: "bot_command", Offset: 0, Length: 3}},
+		Document: &tg.Attachment{
+			FileID:   "BQACAgIAAxkBAAExample",
+			FileName: "example.zip",
+			FileSize: 20480,
+			MimeType: "application/zip",
+		},
+	}
+
+	cases := []struct {
+		имя   string
+		extra string
+	}{
+		{имя: "основной путь", extra: ""},
+		// Незнакомое поле роняет строгий разбор моделью и включает запасной путь
+		// — документ и подпись обязаны разобраться там точно так же.
+		{имя: "запасной путь (незнакомое поле)", extra: `, "forward_origin": {"type": "вид_которого_ещё_нет"}`},
+	}
+
+	for _, c := range cases {
+		t.Run(c.имя, func(t *testing.T) {
+			double := newDouble(t, `[{"update_id":7,"message":{
+				"chat":{"id":-1001},"from":{"id":9,"username":"tester"},`+файлИПодпись+c.extra+`}}]`)
+
+			got, err := double.client.GetUpdates(context.Background(), 0, 1)
+			if err != nil {
+				t.Fatalf("получение обновлений: %v", err)
+			}
+			if len(got) != 1 {
+				t.Fatalf("обновлений %d, ожидалось 1", len(got))
+			}
+			if !reflect.DeepEqual(got[0], хочу) {
+				t.Errorf("Update = %+v (Document=%+v),\nожидалось     %+v (Document=%+v)",
+					got[0], got[0].Document, хочу, хочу.Document)
+			}
+		})
+	}
+}
+
 // Различие «разметки нет» и «разметка пуста» переживает и незнакомое поле.
 //
 // Отдельным тестом, потому что запасной путь разбора — это ВТОРОЕ место, где

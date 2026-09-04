@@ -35,11 +35,21 @@ type Updater interface {
 	GetUpdates(ctx context.Context, offset, timeout int) ([]tg.Update, error)
 }
 
+// FileFetcher скачивает файл из Telegram по его file_id.
+//
+// Отдельно от Updater намеренно: скачивание нужно только для вложений, и токен
+// живёт здесь, у моста. Байты мост кладёт в ObjectStore (bus.PutAttachment), а
+// адресат достаёт их оттуда своим NKey — токен ему не выдаётся.
+type FileFetcher interface {
+	FetchFile(ctx context.Context, fileID string) ([]byte, error)
+}
+
 // Intake превращает сообщения человека в письма.
 type Intake struct {
 	js      jetstream.JetStream
 	store   *TopicStore
 	updater Updater
+	files   FileFetcher
 	reg     *bus.Registry
 	poster  Poster
 	logger  *log.Logger
@@ -109,6 +119,10 @@ func (i *Intake) SetPoster(p Poster) { i.poster = p }
 
 // SetBotUsername сообщает имя бота, добытое при старте моста.
 func (i *Intake) SetBotUsername(u string) { i.botUsername = strings.TrimPrefix(u, "@") }
+
+// SetFileFetcher включает скачивание вложений. Без него сообщение с файлом
+// доходит письмом, но с пометкой, что файл получить не удалось.
+func (i *Intake) SetFileFetcher(f FileFetcher) { i.files = f }
 
 // SetState включает устойчивую позицию чтения.
 //
@@ -333,7 +347,10 @@ func (i *Intake) handle(ctx context.Context, update tg.Update) error {
 	}
 
 	text := strings.TrimSpace(update.Text)
-	if text == "" {
+	// Пустой текст без файла игнорируем: служебные и медиа-без-подписи обновления
+	// письмом не становятся. Но файл без подписи — становится: сам файл и есть
+	// сообщение, адресат заберёт его по file_id.
+	if text == "" && update.Document == nil {
 		return nil
 	}
 
@@ -367,7 +384,8 @@ func (i *Intake) handle(ctx context.Context, update tg.Update) error {
 	if err != nil {
 		return err
 	}
-	m := mail.New(HumanID, dest.recipients, subjectFrom(text), text)
+	m := mail.New(HumanID, dest.recipients,
+		subjectForMessage(text, update.Document), i.bodyForMessage(ctx, text, update.Document))
 
 	// Решение записывается ДО публикации, а не после.
 	//
@@ -695,6 +713,92 @@ func subjectFrom(text string) string {
 	return line
 }
 
+// subjectForMessage — тема письма из текста, а для файла без подписи — из
+// имени файла: иначе у переданного архива была бы безликая тема «сообщение от
+// человека», и в витрине не разобрать, что прислали.
+func subjectForMessage(text string, doc *tg.Attachment) string {
+	if strings.TrimSpace(text) == "" && doc != nil && doc.FileName != "" {
+		return subjectFrom("файл: " + doc.FileName)
+	}
+	return subjectFrom(text)
+}
+
+// bodyForMessage дописывает к тексту блок вложения, предварительно СКАЧАВ файл
+// и положив его байты в ObjectStore.
+//
+// Байты в письмо не кладутся: письмо — текст (лимит 64 КБ). В тело идёт лишь
+// ключ объекта, по которому адресат достаёт файл своим NKey (fetch_attachment).
+// Скачивание может не удаться (нет токена в тестах, отказ Telegram) — тогда
+// письмо всё равно доходит, но с пометкой, что файл не получен: потерять само
+// сообщение из-за файла хуже, чем доставить его без файла.
+func (i *Intake) bodyForMessage(ctx context.Context, text string, doc *tg.Attachment) string {
+	if doc == nil {
+		return text
+	}
+
+	var note string
+	if key, err := i.storeAttachment(ctx, doc); err != nil {
+		i.logger.Printf("мост: вложение не сохранено: %v", err)
+		note = failedAttachmentNote(doc)
+	} else {
+		note = attachmentNote(doc, key)
+	}
+
+	if strings.TrimSpace(text) == "" {
+		return note
+	}
+	return text + "\n\n" + note
+}
+
+// storeAttachment качает файл из Telegram и кладёт его байты в ObjectStore.
+// Возвращает ключ объекта для тела письма.
+func (i *Intake) storeAttachment(ctx context.Context, doc *tg.Attachment) (string, error) {
+	if i.files == nil {
+		return "", fmt.Errorf("загрузчик файлов не настроен")
+	}
+	data, err := i.files.FetchFile(ctx, doc.FileID)
+	if err != nil {
+		return "", fmt.Errorf("скачивание: %w", err)
+	}
+	key, err := bus.PutAttachment(ctx, i.js, doc.FileName, data)
+	if err != nil {
+		return "", fmt.Errorf("сохранение в ObjectStore: %w", err)
+	}
+	return key, nil
+}
+
+// attachmentNote — блок про вложение с КЛЮЧОМ ОБЪЕКТА (не file_id).
+//
+// По ключу адресат зовёт fetch_attachment и достаёт байты из ObjectStore своим
+// NKey. Ни file_id, ни токена в письме нет: качать нечем, да и незачем.
+func attachmentNote(doc *tg.Attachment, key string) string {
+	name := doc.FileName
+	if name == "" {
+		name = "файл"
+	}
+	b := &strings.Builder{}
+	fmt.Fprintf(b, "📎 ВЛОЖЕНИЕ: %s", name)
+	switch {
+	case doc.FileSize > 0 && doc.MimeType != "":
+		fmt.Fprintf(b, " (%d байт, %s)", doc.FileSize, doc.MimeType)
+	case doc.FileSize > 0:
+		fmt.Fprintf(b, " (%d байт)", doc.FileSize)
+	case doc.MimeType != "":
+		fmt.Fprintf(b, " (%s)", doc.MimeType)
+	}
+	fmt.Fprintf(b, "\nобъект: %s\nЗабери файл инструментом fetch_attachment (object=\"%s\").", key, key)
+	return b.String()
+}
+
+// failedAttachmentNote — блок для случая, когда файл скачать/сохранить не вышло.
+func failedAttachmentNote(doc *tg.Attachment) string {
+	name := doc.FileName
+	if name == "" {
+		name = "файл"
+	}
+	return fmt.Sprintf("📎 ВЛОЖЕНИЕ: %s — получить не удалось, попроси прислать снова", name)
+}
+
 // toCommand — единственная команда, которую мост разбирает сам.
 //
 // Остальные команды по-прежнему отбрасываются: `/start` из супергруппы
@@ -796,7 +900,9 @@ func (i *Intake) aliveList() string {
 // объяснение в ту же тему. Рассылка «всем живым» при неузнанном имени была бы
 // худшим из возможных ответов: команда просила обратного.
 func (i *Intake) deliverTo(ctx context.Context, update tg.Update, agentID, body string) error {
-	if agentID == "" || body == "" {
+	// Пустой текст допустим, если приложен файл: `/to pm` + архив без подписи —
+	// это адресная передача файла, сам файл и есть содержимое.
+	if agentID == "" || (body == "" && update.Document == nil) {
 		i.tellHuman(ctx, update.ThreadID,
 			"⚠️ Формат: <code>/to агент текст</code>. Сейчас в сети: "+i.aliveList())
 		return nil
@@ -816,7 +922,8 @@ func (i *Intake) deliverTo(ctx context.Context, update tg.Update, agentID, body 
 		i.warnUnknownProject(ctx, update.ThreadID)
 	}
 
-	m := mail.New(HumanID, []string{agentID}, subjectFrom(body), body)
+	m := mail.New(HumanID, []string{agentID},
+		subjectForMessage(body, update.Document), i.bodyForMessage(ctx, body, update.Document))
 	m.ID = telegramMessageID(update)
 	if where.threadID != "" {
 		m.ThreadID = where.threadID

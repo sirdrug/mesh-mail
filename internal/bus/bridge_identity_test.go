@@ -38,7 +38,12 @@ authorization {
           "$JS.API.DIRECT.GET.KV_bridge_topics.>",
           "$JS.API.CONSUMER.CREATE.KV_bridge_topics.>",
           "$JS.API.CONSUMER.MSG.NEXT.KV_bridge_topics.>",
-          "$JS.API.CONSUMER.DELETE.KV_bridge_topics.>"
+          "$JS.API.CONSUMER.DELETE.KV_bridge_topics.>",
+          "$O.MAIL_FILES.>",
+          "$JS.API.STREAM.CREATE.OBJ_MAIL_FILES",
+          "$JS.API.STREAM.UPDATE.OBJ_MAIL_FILES",
+          "$JS.API.STREAM.INFO.OBJ_MAIL_FILES",
+          "$JS.API.DIRECT.GET.OBJ_MAIL_FILES.>"
         ] }
         subscribe: { allow: ["mail.>", "agents.*.presence", "_INBOX_bridge.>"] }
       }

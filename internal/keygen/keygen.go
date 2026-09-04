@@ -167,7 +167,13 @@ func agentUser(p Pair) string {
           "$JS.API.DIRECT.GET.KV_claims.>",
           "$JS.API.CONSUMER.CREATE.KV_claims.>",
           "$JS.API.CONSUMER.MSG.NEXT.KV_claims.>",
-          "$JS.API.CONSUMER.DELETE.KV_claims.>"
+          "$JS.API.CONSUMER.DELETE.KV_claims.>",
+          "$JS.API.STREAM.INFO.OBJ_MAIL_FILES",
+          "$JS.API.DIRECT.GET.OBJ_MAIL_FILES.>",
+          "$JS.API.CONSUMER.CREATE.OBJ_MAIL_FILES.>",
+          "$JS.API.CONSUMER.INFO.OBJ_MAIL_FILES.>",
+          "$JS.API.CONSUMER.MSG.NEXT.OBJ_MAIL_FILES.>",
+          "$JS.API.CONSUMER.DELETE.OBJ_MAIL_FILES.>"
         ] }
         subscribe: { allow: ["mail.%s.*", "agents.*.presence", "_INBOX_%s.>"] }
       }
@@ -221,7 +227,12 @@ func bridgeUser(p Pair) string {
           "$JS.API.DIRECT.GET.KV_claims.>",
           "$JS.API.CONSUMER.CREATE.KV_claims.>",
           "$JS.API.CONSUMER.MSG.NEXT.KV_claims.>",
-          "$JS.API.CONSUMER.DELETE.KV_claims.>"
+          "$JS.API.CONSUMER.DELETE.KV_claims.>",
+          "$O.MAIL_FILES.>",
+          "$JS.API.STREAM.CREATE.OBJ_MAIL_FILES",
+          "$JS.API.STREAM.UPDATE.OBJ_MAIL_FILES",
+          "$JS.API.STREAM.INFO.OBJ_MAIL_FILES",
+          "$JS.API.DIRECT.GET.OBJ_MAIL_FILES.>"
         ] }
         subscribe: { allow: ["mail.>", "agents.*.presence", "_INBOX_%s.>"] }
       }

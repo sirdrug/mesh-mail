@@ -15,6 +15,15 @@ const (
 	StreamName = "MAIL"
 	// StateBucket — KV с позицией чтения каждого агента.
 	StateBucket = "mail_state"
+	// FilesBucket — ObjectStore с байтами вложений.
+	//
+	// Байты файла в письмо не кладутся (лимит 64 КБ, письмо — текст). Мост
+	// скачивает файл из Telegram СВОИМ токеном и кладёт байты сюда, а в тело
+	// письма идёт лишь ключ объекта. Агент забирает файл ОТСЮДА своим NKey —
+	// токен бота ему не нужен и по замыслу не выдаётся. Так «приём» (мост
+	// принял файл) дополняется «получением» (адресат его достал), не ломая
+	// инвариант «токен только у моста».
+	FilesBucket = "MAIL_FILES"
 
 	mailSubjectPrefix = "mail."
 	// Письма живут три месяца: этого хватает, чтобы поднять старый тред,
@@ -33,6 +42,10 @@ const (
 	// Плата за это — таблица дедупликации в памяти сервера. В ней лежат
 	// только идентификаторы, а писем у нас сотни в сутки, не миллионы.
 	dedupWindow = 24 * time.Hour
+
+	// filesRetention — сколько живут байты вложений. Равно сроку писем: пока
+	// письмо со ссылкой на объект достижимо, достижим и сам файл.
+	filesRetention = mailRetention
 )
 
 // MailSubject — тема, в которую кладут письмо для агента.
@@ -112,7 +125,10 @@ func EnsureBridgeTopology(ctx context.Context, js jetstream.JetStream) error {
 	if err := ensureStream(ctx, js); err != nil {
 		return err
 	}
-	return ensureBucket(ctx, js)
+	if err := ensureBucket(ctx, js); err != nil {
+		return err
+	}
+	return ensureObjectStore(ctx, js)
 }
 
 // CheckTopology убеждается, что топология на месте, и НИЧЕГО не меняет.

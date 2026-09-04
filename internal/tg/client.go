@@ -255,6 +255,22 @@ type Update struct {
 	// username меняется владельцем в любой момент и не годится на роль
 	// удостоверения.
 	FromID int64
+	// Document — приложенный файл. nil, если сообщение без файла.
+	//
+	// Байты сюда НЕ кладутся: мост файл не качает и в письмо не тащит — письмо
+	// остаётся текстом (лимит 64 КБ). Здесь только ссылка (FileID), по которой
+	// адресат забирает файл из Bot API сам. У сообщения с файлом текст лежит в
+	// caption, поэтому парсер кладёт caption в Text: команда `/to` и разбор
+	// разговора работают тем же путём, что и для обычного сообщения.
+	Document *Attachment
+}
+
+// Attachment — ссылка на файл в Telegram, без самих байтов.
+type Attachment struct {
+	FileID   string
+	FileName string
+	FileSize int64
+	MimeType string
 }
 
 // APIError — отказ, пришедший от самого Telegram.
@@ -615,8 +631,18 @@ func parseUpdate(raw json.RawMessage) (Update, error) {
 type wireUpdate struct {
 	UpdateID int64 `json:"update_id"`
 	Message  *struct {
-		Text           string   `json:"text"`
-		Entities       []Entity `json:"entities"`
+		Text     string   `json:"text"`
+		Entities []Entity `json:"entities"`
+		// У сообщения с файлом текст человека лежит в caption, а разметка —
+		// в caption_entities. Читаем их наравне с text/entities.
+		Caption         string   `json:"caption"`
+		CaptionEntities []Entity `json:"caption_entities"`
+		Document        *struct {
+			FileID   string `json:"file_id"`
+			FileName string `json:"file_name"`
+			FileSize int64  `json:"file_size"`
+			MimeType string `json:"mime_type"`
+		} `json:"document"`
 		ReplyToMessage *struct {
 			MessageID int `json:"message_id"`
 			From      *struct {
@@ -653,8 +679,13 @@ func (w wireUpdate) toUpdate() (Update, error) {
 
 	update.ChatID = strconv.FormatInt(w.Message.Chat.ID, 10)
 	update.ThreadID = w.Message.ThreadID
-	update.Text = w.Message.Text
-	update.Entities = w.Message.Entities
+
+	var doc *Attachment
+	if d := w.Message.Document; d != nil {
+		doc = &Attachment{FileID: d.FileID, FileName: d.FileName, FileSize: d.FileSize, MimeType: d.MimeType}
+	}
+	applyContent(&update, w.Message.Text, w.Message.Entities,
+		w.Message.Caption, w.Message.CaptionEntities, doc)
 
 	if from := w.Message.From; from != nil {
 		update.From = from.Username
@@ -699,8 +730,13 @@ func updateFromModel(item models.Update) (Update, error) {
 
 	update.ChatID = strconv.FormatInt(message.Chat.ID, 10)
 	update.ThreadID = message.MessageThreadID
-	update.Text = message.Text
-	update.Entities = entitiesFromModel(message.Entities)
+
+	var doc *Attachment
+	if d := message.Document; d != nil {
+		doc = &Attachment{FileID: d.FileID, FileName: d.FileName, FileSize: d.FileSize, MimeType: d.MimeType}
+	}
+	applyContent(&update, message.Text, entitiesFromModel(message.Entities),
+		message.Caption, entitiesFromModel(message.CaptionEntities), doc)
 
 	if from := message.From; from != nil {
 		update.From = from.Username
@@ -713,6 +749,26 @@ func updateFromModel(item models.Update) (Update, error) {
 	}
 
 	return update, nil
+}
+
+// applyContent кладёт в обновление текст, разметку и файл. Оба пути разбора
+// зовут её, чтобы не разойтись: у сообщения с файлом человеческий текст лежит
+// в caption, и если самого text нет — читаем caption как текст, а
+// caption_entities как разметку. Так `/to` и разбор разговора работают для
+// файла тем же кодом, что и для обычного сообщения.
+//
+// Различие nil и пустого списка разметки сохраняется: подставляем ровно то,
+// что пришло, и ничего не «схлопываем».
+func applyContent(u *Update, text string, entities []Entity,
+	caption string, captionEntities []Entity, doc *Attachment,
+) {
+	u.Text = text
+	u.Entities = entities
+	if u.Text == "" && caption != "" {
+		u.Text = caption
+		u.Entities = captionEntities
+	}
+	u.Document = doc
 }
 
 // entitiesFromModel переносит разметку, сохраняя смещения нетронутыми.

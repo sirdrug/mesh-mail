@@ -135,6 +135,9 @@ func Run(ctx context.Context, conn *bus.Conn, cfg Config) error {
 	// Позиция чтения переживает рестарт: иначе мост разбирает заново всё, что
 	// Telegram успел накопить, и человек получает свои сообщения повторно.
 	intake.SetState(state)
+	// Скачивание вложений идёт тем же клиентом (у него токен): мост качает
+	// файл и кладёт байты в ObjectStore, агент достаёт их своим NKey.
+	intake.SetFileFetcher(client)
 	group.Go(func() error {
 		return intake.Run(groupCtx)
 	})
