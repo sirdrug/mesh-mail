@@ -168,25 +168,37 @@ func TestScreenШлётEnterОтдельнойВставкой(t *testing.T) {
 	}
 }
 
+// tmux, как и screen, шлёт текст и Enter ДВУМЯ командами — с паузой между ними
+// (settlePause), которую добавляет Poke. Слитный `send-keys ... "текст" Enter`
+// в TUI Claude Code печатает текст, но приклеенный Enter съедается как перевод
+// строки: сессия выглядит разбуженной, а агент не проснулся. Проверено живьём
+// на автономной банде.
 func TestTmuxПередаётEnterОтдельнойКлавишей(t *testing.T) {
 	cmds := Commands(Target{Kind: KindTmux, Name: "pi-codex", Window: "0"})
 
-	if len(cmds) != 1 {
-		t.Fatalf("tmux умеет одной командой, шагов %d: %v", len(cmds), cmds)
+	if len(cmds) != 2 {
+		t.Fatalf("tmux шлёт текст и Enter раздельно, шагов %d: %v", len(cmds), cmds)
 	}
-	argv := cmds[0]
 
-	if argv[len(argv)-1] != "Enter" {
-		t.Fatalf("tmux не получает Enter отдельным аргументом: %v", argv)
+	text := cmds[0][len(cmds[0])-1]
+	if text != PokeNotice {
+		t.Fatalf("первый шаг tmux вставляет не текст уведомления: %q", text)
 	}
-	for _, arg := range argv {
-		if strings.HasSuffix(arg, "\r") {
-			t.Fatalf("в аргументах tmux возврат каретки — он нужен только screen: %q", arg)
+
+	enter := cmds[1][len(cmds[1])-1]
+	if enter != "Enter" {
+		t.Fatalf("второй шаг tmux не является нажатием Enter: %v", cmds[1])
+	}
+	for _, argv := range cmds {
+		for _, arg := range argv {
+			if strings.HasSuffix(arg, "\r") {
+				t.Fatalf("в аргументах tmux возврат каретки — он нужен только screen: %q", arg)
+			}
 		}
-	}
-	// Панель приклеивается к имени сессии, а не уезжает отдельным аргументом.
-	if argv[3] != "pi-codex:0" {
-		t.Fatalf("цель tmux собрана неверно: %q", argv[3])
+		// Панель приклеивается к имени сессии, а не уезжает отдельным аргументом.
+		if argv[3] != "pi-codex:0" {
+			t.Fatalf("цель tmux собрана неверно: %q", argv[3])
+		}
 	}
 }
 
